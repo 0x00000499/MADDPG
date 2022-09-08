@@ -37,10 +37,10 @@ class CriticNetwork(nn.Module):
 
 
 class ActorNetwork(nn.Module):
-    def __init__(self, alpha, state_dims, fc1_dims, fc2_dims, n_actions, save_dir):
+    def __init__(self, alpha, obs_dims, fc1_dims, fc2_dims, n_actions, save_dir):
         super(ActorNetwork, self).__init__()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(state_dims, fc1_dims),
+            nn.Linear(obs_dims, fc1_dims),
             nn.ReLU(),
             nn.Linear(fc1_dims, fc2_dims),
             nn.ReLU(fc2_dims),
@@ -53,10 +53,10 @@ class ActorNetwork(nn.Module):
     def forward(self, state):
         return self.linear_relu_stack(state)
 
-    def save_actor_mode(self):
+    def save_actor_model(self):
         torch.save(self.state_dict(), self.save_dir)
 
-    def load_checkpoint(self):
+    def load_actor_model(self):
         self.load_state_dict(torch.load(self.save_dir))
         self.eval()
 

@@ -109,7 +109,7 @@ class ReplayBuffer():
             agent_next_states.append(self.agents_new_state_memory[agent_idx][batch])
             agent_actions.append(self.agents_action_memory[agent_idx][batch])
 
-        return agent_states, states, agent_actions, rewards, agent_next_states, states_next, terminal
+        return states, states_next, agent_states, agent_actions, rewards, agent_next_states, terminal
 
 
     def ready(self):

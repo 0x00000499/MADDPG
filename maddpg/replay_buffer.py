@@ -7,6 +7,8 @@
 import numpy as np
 
 class ReplayBuffer():
+    # 这个replaybuffer的性能很差，初始化的时候是先申请对应大小的空间，这样就会导致buffer特别大的时候初始化非常慢
+    # 所以后面再设计buffer的时候一定要采用增量式添加
     def __init__(self, max_size, batch_size, env):
         '''
         初始化经验回放缓冲
@@ -19,9 +21,9 @@ class ReplayBuffer():
         self.env = env
         self.batch_size = batch_size
         # 整体的状态，包括各个agent的观测值
-        self.state_memory = np.array([[0.1] * len(self.env.state()) for i in range(self.mem_size)])
+        self.state_memory = np.array([[0.0] * len(self.env.state()) for i in range(self.mem_size)])
         # 整体的下一个状态，同样包括各个agent的观测值
-        self.state_next_memory = np.array([[0.1] * len(self.env.state()) for i in range(self.mem_size)])
+        self.state_next_memory = np.array([[0.0] * len(self.env.state()) for i in range(self.mem_size)])
         # 每个agent的reward装的是字典
         self.reward_memory = np.array([{} for _ in range(self.mem_size)])
         # 每个agent的中止状态装的也是字典

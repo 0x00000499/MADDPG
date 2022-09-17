@@ -4,93 +4,167 @@
 # @Email : dut_gaoxinzhi@qq.com
 # @File : main.py
 # @Project : maddpg-review
-import sys,os
-import torch
+import sys, os
+import time
 
+import torch
+from tqdm import tqdm
 curr_path = os.path.dirname(os.path.abspath(__file__))  # current path
 parent_path = os.path.dirname(curr_path)  # parent path
 sys.path.append(parent_path)
 import datetime
 import argparse
 import numpy as np
+from pettingzoo.mpe import simple_push_v2
+from pettingzoo.mpe.simple_push import simple_push
+from pettingzoo.mpe import simple_tag_v2
 from pettingzoo.mpe import simple_adversary_v2
+from pettingzoo.mpe import simple_v2
 from maddpg.replay_buffer import ReplayBuffer
+from maddpg.maddpg_algo import MADDPG
+import matplotlib.pyplot as plt
+
 def get_cfg():
     curr_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     parser = argparse.ArgumentParser(description="hyperparameters")
     # env set
     parser.add_argument('--algo_name', default='MADDPG', type=str, help="name of algorithm")
-    parser.add_argument('--env_name', default='simple_adversary_v2', type=str, help="name of environment")
-    # parser.add_argument('--agents_n', default=2, type=int, help="agents amount")
-    # parser.add_argument('--continuous_actions', default=True, type=bool, help="continuous env or discrete")
-    # parser.add_argument('--max_cycles', default=5000, type=int, help="max env cycles")
+    parser.add_argument('--env_name', default='simple_push', type=str, help="name of environment")
+    parser.add_argument('--max_cycles', default=25, type=int, help="max cycle for episode")
+    parser.add_argument('--continuous_actions', default=True, type=bool, help="continuous env or discrete")
+    parser.add_argument('--agents_n', default=2, type=int, help="agents number")
     # train test set
-    parser.add_argument('--train_eps', default=300, type=int, help="episodes of training")
+    parser.add_argument('--train_eps', default=50000, type=int, help="episodes of training")
     parser.add_argument('--test_eps', default=20, type=int, help="episodes of testing")
     parser.add_argument('--gamma', default=0.99, type=float, help="discounted factor")
-    parser.add_argument('--critic_lr', default=1e-3, type=float, help="learning rate of critic")
-    parser.add_argument('--actor_lr', default=1e-4, type=float, help="learning rate of actor")
-    parser.add_argument('--buffer_size', default=8000, type=int, help="memory capacity")
-    parser.add_argument('--batch_size', default=2, type=int)
-    parser.add_argument('--target_update', default=2, type=int)
-    parser.add_argument('--soft_tau', default=1e-2, type=float)
-    parser.add_argument('--hidden_dim', default=256, type=int)
+    parser.add_argument('--critic_lr', default=0.01, type=float, help="learning rate of critic")
+    parser.add_argument('--actor_lr', default=0.01, type=float, help="learning rate of actor")
+    parser.add_argument('--buffer_size', default=1000000, type=int, help="memory capacity")
+    parser.add_argument('--batch_size', default=1024, type=int)
+    parser.add_argument('--soft_tau', default=0.01, type=float)
+    parser.add_argument('--hidden_dim', default=64, type=int)
     parser.add_argument('--device', default='cuda', type=str, help="cpu or cuda")
-    parser.add_argument('--result_path', default=curr_path + "/outputs/" + parser.parse_args().env_name + \
-                                                 '/' + curr_time + '/results/')
-    parser.add_argument('--model_path', default=curr_path + "/outputs/" + parser.parse_args().env_name + \
-                                                '/' + curr_time + '/models/')  # path to save models
-    parser.add_argument('--save_fig', default=True, type=bool, help="if save figure or not")
+    parser.add_argument('--result_path', default=curr_path + "\\outputs\\" + 'results\\')
+    parser.add_argument('--model_path', default=curr_path + "\\outputs\\" + 'models\\')  # path to save models
+    parser.add_argument('--evaluate', default=True, type=bool, help="evaluate")
     args = parser.parse_args()
     return args
 
+class OUNoise(object):
+    '''Ornstein–Uhlenbeck噪声
+    '''
+    def __init__(self, action_space, mu=0.0, theta=0.15, max_sigma=0.3, min_sigma=0.3, decay_period=10000):
+        self.mu           = mu # OU噪声的参数
+        self.theta        = theta # OU噪声的参数
+        self.sigma        = max_sigma # OU噪声的参数
+        self.max_sigma    = max_sigma
+        self.min_sigma    = min_sigma
+        self.decay_period = decay_period
+        self.n_actions   = action_space.shape[0]
+        self.low          = action_space.low
+        self.high         = action_space.high
+        self.reset()
+    def reset(self):
+        self.obs = np.ones(self.n_actions) * self.mu
+    def evolve_obs(self):
+        x  = self.obs
+        dx = self.theta * (self.mu - x) + self.sigma * np.random.randn(self.n_actions)
+        self.obs = x + dx
+        return self.obs
+    def get_action(self, action, t=0):
+        ou_obs = self.evolve_obs()
+        self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1.0, t / self.decay_period) # sigma会逐渐衰减
+        return np.clip(action + ou_obs, self.low, self.high) # 动作加上噪声后进行剪切
 
-def make_env_with_buffer(cfg, seed = None, agents_n = 2, continuous_actions=True, max_cycles = 5000, buffer_size = 1024):
-    env = simple_adversary_v2.parallel_env(N=agents_n, continuous_actions=continuous_actions, max_cycles = max_cycles)
+
+def make_env(cfg, seed=None, agents_n=2, continuous_actions=True, max_cycles=25):
+    env = simple_push_v2.parallel_env(continuous_actions=continuous_actions, max_cycles=max_cycles)
     env.reset()
-    if seed is not None:
-        env.seed(seed)
-    n_agents = env.num_agents
-    agents = env.agents
-    state_dim = env.state_space.shape[0]
-    agent_obs_dims = []
-    agent_action_dims = []
-    batch_size = cfg.batch_size
-    for agent_idx in range(n_agents):
-        agent_obs_dims.append(env.observation_space(env.agents[agent_idx]).shape[0])
-        agent_action_dims.append(env.action_space(env.agents[agent_idx]).shape[0])
-
-    replay_buffer = ReplayBuffer(max_size=buffer_size, state_dim=state_dim,
-                                      agent_obs_dims=agent_obs_dims, agent_actions_dims=agent_action_dims,
-                                      n_agents=n_agents, batch_size=batch_size, agents=agents)
-    return env, replay_buffer
-
+    return env
 
 
 def train(cfg):
-    max_cycles = 500
-    env, replay_buffer = make_env_with_buffer(cfg = cfg, max_cycles = max_cycles)
-    obs = env.reset()
-    state = env.state()
-    for step in range(max_cycles):
-        # action类型必须是np.float32! 第一位无操作，2-5位给定四个方向上的速度
-        action = np.array([0,1,0,0,0],dtype=np.float32)
-        actions = {agent: action for agent in env.agents}
-        obs_next, rewards, dones, _ = env.step(actions)
-        state_next = env.state()
-        replay_buffer.push(obs=obs, state=state, actions=actions, rewards=rewards, obs_next=obs_next,
-                                state_next=state_next, dones=dones)
-        env.render()
-    print(replay_buffer.sample_buffer())
+    fig, ax = plt.subplots()
+    eposide_record = []
+    score_mean = []
+    ############################
+    env = make_env(cfg, agents_n=cfg.agents_n, continuous_actions=cfg.continuous_actions, max_cycles=cfg.max_cycles)
+    replay_buffer = ReplayBuffer(max_size=cfg.buffer_size, batch_size=cfg.batch_size, env=env)
+    maddpg_agents = MADDPG(env, cfg.device, fc1=cfg.hidden_dim, fc2=cfg.hidden_dim, alpha=cfg.actor_lr,
+                           save_dir=cfg.model_path, beta=cfg.critic_lr, tau=cfg.soft_tau,gamma=cfg.gamma)
+    noise = {}
+    for a_n in env.agents:
+        noise[a_n] = OUNoise(env.action_space(a_n))
+    best_average = -15
+    total_step = 0
+    score_history = []
+    for eposide in tqdm(range(cfg.train_eps)):
+        for a_n in env.agents:
+            noise[a_n].reset()
+        obs = env.reset()
+        state = env.state()
+        # 记录每个回合的成绩
+        score = 0
+        for step in range(cfg.max_cycles):
+            # action类型必须是np.float32! 第一位无操作，2-5位给定四个方向上的速度
+            actions = maddpg_agents.choose_actions(obs)
+            for a_n in env.agents:
+                actions[a_n] += np.random.rand(env.action_space(a_n).shape[0]) if eposide < 10000 else np.zeros(env.action_space(a_n).shape[0])
+                actions[a_n] = np.clip(actions[a_n], env.action_space(a_n).low, env.action_space(a_n).high).astype(np.float32)
+            obs_next, rewards, dones, _ = env.step(actions)
+            if step == cfg.max_cycles - 1:
+                for a_n in env.agents:
+                    dones[a_n] = True
+            state_next = env.state()
+            replay_buffer.push(obs=obs, state=state, actions=actions, rewards=rewards, obs_next=obs_next,
+                               state_next=state_next, dones=dones)
+            obs = obs_next
+            state = state_next
+            total_step += 1
+            if total_step % 100 == 0:
+                maddpg_agents.learn(replay_buffer)
+            score += np.sum(list(rewards.values()))
+        score_history.append(score)
+        average_score = np.mean(score_history[-100:])
+        if average_score > best_average and eposide > 0:
+            best_average = average_score
+            maddpg_agents.save_algo()
+        if eposide % 500 == 0 and eposide > 0:
+            eposide_record.append(eposide)
+            score_mean.append(average_score)
+            print("epoch", eposide, 'average score {:.1f}'.format(average_score),
+                  'best score {:.1f}'.format(best_average))
     env.close()
-    '''
-    训练模型
-    :return:
-    '''
- # Press Ctrl+F8 to toggle the breakpoint.
+    ############################
+    ax.plot(eposide_record, score_mean)
+    ax.set_xlabel('eposide')
+    ax.set_ylabel('100 times average reward')
+    ax.set_title('reward curve')
+    fig.savefig(cfg.result_path + "result.jpg")
+    fig.show()
+
+
+
+def test(cfg):
+    env = make_env(cfg)
+    maddpg_agents = MADDPG(env, cfg.device, fc1=cfg.hidden_dim, fc2=cfg.hidden_dim, alpha=cfg.actor_lr,
+                           save_dir=cfg.model_path, beta=cfg.critic_lr, tau=cfg.soft_tau, gamma=cfg.gamma)
+    maddpg_agents.load_algo()
+    for epoch in range(cfg.test_eps):
+        obs = env.reset()
+        for step in range(cfg.max_cycles):
+            # action类型必须是np.float32! 第一位无操作，2-5位给定四个方向上的速度
+            actions = maddpg_agents.choose_actions(obs)
+            obs, rewards, dones, _ = env.step(actions)
+            env.render()
+            time.sleep(0.05)
+    env.close()
+
 
 
 if __name__ == '__main__':
     cfg = get_cfg()
-    train(cfg)
-
+    if not cfg.evaluate:
+        train(cfg)
+    else:
+        test(cfg)

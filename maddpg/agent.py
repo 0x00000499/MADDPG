@@ -6,6 +6,7 @@
 # @Project : maddpg-review
 import torch
 from maddpg.networks import ActorNetwork, CriticNetwork
+import numpy as np
 
 
 class Agent:
@@ -27,14 +28,10 @@ class Agent:
         self.update_network_parameters(tau=1)
 
     def choose_action(self, obs):
-        obs = torch.tensor(obs, dtype=torch.float, device=self.device)
+        obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
         action = self.actor(obs)
-        # TODO:添加噪声，而且这里还可能出问题
-        noise = torch.rand(self.n_actions, device=self.device)
-        action = action + noise
-        action = torch.clip(action, 0, 1)
         if self.device == 'cuda':
-            return action.cpu().detach().numpy()
+            return action.detach().cpu().numpy()
         else:
             return action.detach().numpy()
 

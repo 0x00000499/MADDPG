@@ -10,7 +10,6 @@ import os
 import numpy
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
 
@@ -21,7 +20,7 @@ class CriticNetwork(nn.Module):
             nn.Linear(state_dims + n_agents * n_actions, fc1_dims),
             nn.ReLU(),
             nn.Linear(fc1_dims, fc2_dims),
-            nn.ReLU(fc2_dims),
+            nn.ReLU(),
             nn.Linear(fc2_dims, 1)
         )
         self.optimizer = optim.Adam(self.parameters(), lr=beta)
@@ -30,7 +29,7 @@ class CriticNetwork(nn.Module):
         self.to(self.device)
 
     def forward(self, state, action):
-        data_in = torch.cat([state, action], dim = 1)
+        data_in = torch.cat([state, action], dim=1)
         return self.linear_relu_stack(data_in)
 
     def save_critic_model(self):
@@ -42,15 +41,15 @@ class CriticNetwork(nn.Module):
 
 
 class ActorNetwork(nn.Module):
-    def __init__(self, alpha, obs_dims, fc1_dims, fc2_dims, n_actions,device, save_dir):
+    def __init__(self, alpha, obs_dims, fc1_dims, fc2_dims, n_actions, device, save_dir):
         super(ActorNetwork, self).__init__()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(obs_dims, fc1_dims),
             nn.ReLU(),
             nn.Linear(fc1_dims, fc2_dims),
-            nn.ReLU(fc2_dims),
+            nn.ReLU(),
             nn.Linear(fc2_dims, n_actions),
-            nn.Softmax()
+            nn.Sigmoid()
         )
         self.save_dir = save_dir
         self.optimizer = optim.Adam(self.parameters(), lr=alpha)
@@ -69,4 +68,8 @@ class ActorNetwork(nn.Module):
 
 
 if __name__ == '__main__':
-    pass
+    net = ActorNetwork(0.01, 19, 64, 64, 5, 'cuda', '..\\outputs\\models\\agent_0_actor.pth')
+    net.load_actor_model()
+    print(net(torch.tensor([-0.13578, 0.01653, -0.77000, -1.26925, 0.25000, 0.75000, 0.25000, -0.77000, -1.26925, -0.09854, -0.61911,
+               0.10000, 0.90000, 0.10000, 0.10000, 0.10000, 0.90000, -0.04686, -1.02172
+               ], device='cuda')))

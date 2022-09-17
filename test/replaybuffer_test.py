@@ -32,7 +32,9 @@ class TestReplayBuffer(unittest.TestCase):
             state_next = self.env.state()
             self.replay_buffer.push(obs=obs, state=state, actions=actions, rewards=rewards, obs_next=obs_next,
                                     state_next=state_next, dones=dones)
-        print(self.replay_buffer.sample_buffer())
+        state, state_next, agents_obs, agents_actions, rewards, agents_obs_next, terminals = self.replay_buffer.sample_buffer()
+        reward = [r['agent_0'] for r in rewards]
+        print(reward)
         self.env.close()
 
 

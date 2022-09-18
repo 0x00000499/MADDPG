@@ -49,7 +49,7 @@ class ActorNetwork(nn.Module):
             nn.Linear(fc1_dims, fc2_dims),
             nn.ReLU(),
             nn.Linear(fc2_dims, n_actions),
-            nn.Sigmoid()
+            nn.Tanh()
         )
         self.save_dir = save_dir
         self.optimizer = optim.Adam(self.parameters(), lr=alpha)

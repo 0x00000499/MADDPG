@@ -50,6 +50,7 @@ class MADDPG:
         for agent_name, agent in self.agents.items():
             action = agent.choose_action(agents_obs[agent_name])
             action = action.astype(np.float32)
+            action = np.clip(action, self.env.action_space(agent_name).low ,self.env.action_space(agent_name).high)
             actions[agent_name] = action
         return actions
 

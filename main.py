@@ -5,9 +5,6 @@
 # @File : main.py
 # @Project : maddpg-review
 import sys, os
-import time
-
-import torch
 from tqdm import tqdm
 curr_path = os.path.dirname(os.path.abspath(__file__))  # current path
 parent_path = os.path.dirname(curr_path)  # parent path
@@ -16,13 +13,13 @@ import datetime
 import argparse
 import numpy as np
 from pettingzoo.mpe import simple_push_v2
-from pettingzoo.mpe.simple_push import simple_push
 from pettingzoo.mpe import simple_tag_v2
 from pettingzoo.mpe import simple_adversary_v2
 from pettingzoo.mpe import simple_v2
 from maddpg.replay_buffer import ReplayBuffer
 from maddpg.maddpg_algo import MADDPG
 import matplotlib.pyplot as plt
+import time
 
 def get_cfg():
     curr_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -33,6 +30,7 @@ def get_cfg():
     parser.add_argument('--max_cycles', default=25, type=int, help="max cycle for episode")
     parser.add_argument('--continuous_actions', default=True, type=bool, help="continuous env or discrete")
     parser.add_argument('--agents_n', default=2, type=int, help="agents number")
+    parser.add_argument('--best_score', default=-15, type=int, help="best score baseline for env")
     # train test set
     parser.add_argument('--train_eps', default=50000, type=int, help="episodes of training")
     parser.add_argument('--test_eps', default=20, type=int, help="episodes of testing")
@@ -43,7 +41,7 @@ def get_cfg():
     parser.add_argument('--batch_size', default=1024, type=int)
     parser.add_argument('--soft_tau', default=0.01, type=float)
     parser.add_argument('--hidden_dim', default=64, type=int)
-    parser.add_argument('--device', default='cuda', type=str, help="cpu or cuda")
+    parser.add_argument('--device', default='cpu', type=str, help="cpu or cuda")
     parser.add_argument('--result_path', default=curr_path + "\\outputs\\" + 'results\\')
     parser.add_argument('--model_path', default=curr_path + "\\outputs\\" + 'models\\')  # path to save models
     parser.add_argument('--evaluate', default=True, type=bool, help="evaluate")
@@ -88,15 +86,18 @@ def train(cfg):
     eposide_record = []
     score_mean = []
     ############################
+    model_path = cfg.model_path + cfg.env_name + "\\"
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
     env = make_env(cfg, agents_n=cfg.agents_n, continuous_actions=cfg.continuous_actions, max_cycles=cfg.max_cycles)
     replay_buffer = ReplayBuffer(max_size=cfg.buffer_size, batch_size=cfg.batch_size, env=env)
     maddpg_agents = MADDPG(env, cfg.device, fc1=cfg.hidden_dim, fc2=cfg.hidden_dim, alpha=cfg.actor_lr,
-                           save_dir=cfg.model_path, beta=cfg.critic_lr, tau=cfg.soft_tau,gamma=cfg.gamma)
+                           save_dir=model_path, beta=cfg.critic_lr, tau=cfg.soft_tau,gamma=cfg.gamma)
     noise = {}
     for a_n in env.agents:
         noise[a_n] = OUNoise(env.action_space(a_n))
-    best_average = -15
     total_step = 0
+    best_score = cfg.best_score
     score_history = []
     for eposide in tqdm(range(cfg.train_eps)):
         for a_n in env.agents:
@@ -126,40 +127,44 @@ def train(cfg):
             score += np.sum(list(rewards.values()))
         score_history.append(score)
         average_score = np.mean(score_history[-100:])
-        if average_score > best_average and eposide > 0:
-            best_average = average_score
+        if average_score > best_score and eposide > 0:
+            best_score = average_score
             maddpg_agents.save_algo()
         if eposide % 500 == 0 and eposide > 0:
             eposide_record.append(eposide)
             score_mean.append(average_score)
             print("epoch", eposide, 'average score {:.1f}'.format(average_score),
-                  'best score {:.1f}'.format(best_average))
+                  'best score {:.1f}'.format(best_score))
     env.close()
     ############################
     ax.plot(eposide_record, score_mean)
     ax.set_xlabel('eposide')
     ax.set_ylabel('100 times average reward')
     ax.set_title('reward curve')
-    fig.savefig(cfg.result_path + "result.jpg")
+    res_path = cfg.result_path + cfg.env_name
+    if not os.path.exists(res_path):
+        os.makedirs(res_path)
+    fig.savefig(res_path + "\\result.jpg")
     fig.show()
 
 
 
 def test(cfg):
     env = make_env(cfg)
+    model_path = cfg.model_path + cfg.env_name + "\\"
     maddpg_agents = MADDPG(env, cfg.device, fc1=cfg.hidden_dim, fc2=cfg.hidden_dim, alpha=cfg.actor_lr,
-                           save_dir=cfg.model_path, beta=cfg.critic_lr, tau=cfg.soft_tau, gamma=cfg.gamma)
+                           save_dir=model_path, beta=cfg.critic_lr, tau=cfg.soft_tau, gamma=cfg.gamma)
     maddpg_agents.load_algo()
     for epoch in range(cfg.test_eps):
         obs = env.reset()
         for step in range(cfg.max_cycles):
             # action类型必须是np.float32! 第一位无操作，2-5位给定四个方向上的速度
+            # 这里注意在测试的时候一定要传入正确的obs，一开始没有更新obs导致我查了好久的bug查不出来，一直以为是训练的问题
             actions = maddpg_agents.choose_actions(obs)
             obs, rewards, dones, _ = env.step(actions)
             env.render()
             time.sleep(0.05)
     env.close()
-
 
 
 if __name__ == '__main__':
